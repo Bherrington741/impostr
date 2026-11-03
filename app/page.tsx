@@ -19,6 +19,7 @@ export default function HomePage() {
   const [joinCode, setJoinCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"create" | "join" | null>(null);
+  const [pendingJoin, setPendingJoin] = useState(false);
   const backend = useMemo(() => backendKind(), []);
   const hydrated = useRef(false);
 
@@ -33,7 +34,10 @@ export default function HomePage() {
     // deep link: /?join=CODE
     const params = new URLSearchParams(window.location.search);
     const j = params.get("join");
-    if (j) setJoinCode(j.toUpperCase());
+    if (j) {
+      setJoinCode(j.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4));
+      setPendingJoin(true);
+    }
   }, []);
 
   function commitProfile(): { name: string; emoji: string } {
@@ -44,6 +48,12 @@ export default function HomePage() {
     saveProfile(clean);
     setProfile(clean);
     return clean;
+  }
+
+  /** Save the nickname, then (when deep-linked with ?join=CODE) join right away. */
+  function commitAndProceed() {
+    commitProfile();
+    if (pendingJoin && joinCode.length === 4) handleJoin();
   }
 
   function handleCreate() {
@@ -81,7 +91,7 @@ export default function HomePage() {
       }
       router.push(`/room/${code}`);
     } else {
-      const clean = (profile ?? { name: name.trim() || "Guest", emoji });
+      const clean = commitProfile();
       const identity = getRoomIdentity(code, clean);
       void fetch(`/api/rooms/${code}`, { cache: "no-store" })
         .then(async (res) => {
@@ -121,7 +131,7 @@ export default function HomePage() {
 
       {/* nickname gate / menu */}
       <AnimatePresence mode="wait">
-        {!profileReady ? null : !name ? (
+        {!profileReady ? null : !profile ? (
           <motion.section
             key="nick"
             initial={{ opacity: 0, y: 30 }}
@@ -135,7 +145,11 @@ export default function HomePage() {
               <UserRound className="ml-2 h-5 w-5 shrink-0 text-slate-400" />
               <input
                 value={name}
+                maxLength={18}
                 onChange={(e) => setName(e.target.value.slice(0, 18))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && name.trim()) commitAndProceed();
+                }}
                 placeholder="Nickname"
                 autoFocus
                 className="w-full bg-transparent py-2 text-lg font-black text-white placeholder:text-slate-600 focus:outline-none"
@@ -159,7 +173,7 @@ export default function HomePage() {
               size="lg"
               className="w-full"
               disabled={name.trim().length === 0}
-              onClick={() => commitProfile()}
+              onClick={commitAndProceed}
             >
               <Play className="h-5 w-5" /> That&apos;s my vibe
             </Press>

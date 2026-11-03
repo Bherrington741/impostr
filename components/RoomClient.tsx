@@ -1,10 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { useState } from "react";
-import { Home, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Home, UserRound, Users, DoorOpen } from "lucide-react";
+import { Press } from "@/components/ui/Press";
 import Link from "next/link";
 import { useRoom } from "@/lib/useRoom";
+import { loadProfile, saveProfile, guessEmoji, AVATARS } from "@/lib/game/identity";
 import { LobbyScreen } from "@/components/screens/LobbyScreen";
 import { RevealScreen } from "@/components/screens/RevealScreen";
 import { DiscussionScreen } from "@/components/screens/DiscussionScreen";
@@ -13,8 +15,28 @@ import { LastChanceScreen } from "@/components/screens/LastChanceScreen";
 import { ResultsScreen } from "@/components/screens/ResultsScreen";
 
 export function RoomClient({ code: rawCode }: { code: string }) {
-  const { code, identity, state, privateView: pv, me, send, load } = useRoom(rawCode);
+  const [gate, setGate] = useState<"checking" | "ask" | "open">("checking");
+  const room = useRoom(rawCode, gate === "open");
+  const { code, identity, state, privateView: pv, me, send, load } = room;
   const [showRoster, setShowRoster] = useState(false);
+
+  // HTTP pages pre-render on the server, where session/localStorage don't
+  // exist — decide the gate only after hydration.
+  useEffect(() => {
+    setGate(loadProfile() ? "open" : "ask");
+  }, []);
+
+  if (gate !== "open") {
+    return (
+      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-6">
+        {gate === "checking" ? (
+          <CenterDash title="Opening the room…" emoji="🚪" sub={code} spinner />
+        ) : (
+          <NameGate code={code.toUpperCase()} onDone={() => setGate("open")} />
+        )}
+      </div>
+    );
+  }
 
   if (load === "connecting") {
     return <CenterDash title="Knocking on the door…" emoji="🚪" sub={`Looking for room ${code}`} spinner />;
@@ -129,5 +151,71 @@ function CenterDash({
         </Link>
       )}
     </div>
+  );
+}
+
+/**
+ * Shown when someone deep-links into a room (QR / shared code) without ever
+ * having picked a nickname in this browser. Blocks the room connection until
+ * they commit a name, so they never appear in the room as "Guest 123".
+ */
+function NameGate({ code, onDone }: { code: string; onDone: () => void }) {
+  const [name, setName] = useState("");
+  const [emoji, setEmoji] = useState("👽");
+
+  const join = () => {
+    const clean = {
+      name: (name || `Guest ${Math.floor(100 + Math.random() * 900)}`).trim().slice(0, 18),
+      emoji: emoji || guessEmoji(name || "guest"),
+    };
+    saveProfile(clean);
+    onDone();
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 26 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4">
+      <div className="text-center">
+        <div className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-500">Impostr · room</div>
+        <div className="text-glow-white text-3xl font-black tracking-[0.25em] text-white">{code}</div>
+        <h2 className="mt-3 text-[11px] font-black uppercase tracking-[0.3em] text-slate-500">
+          What do we call you?
+        </h2>
+      </div>
+
+      <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-2">
+        <UserRound className="ml-2 h-5 w-5 shrink-0 text-slate-400" />
+        <input
+          value={name}
+          maxLength={18}
+          onChange={(e) => setName(e.target.value.slice(0, 18))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && name.trim()) join();
+          }}
+          placeholder="Nickname"
+          autoFocus
+          autoCapitalize="words"
+          autoComplete="off"
+          className="w-full bg-transparent py-2 text-lg font-black text-white placeholder:text-slate-600 focus:outline-none"
+        />
+      </div>
+
+      <div className="grid grid-cols-8 gap-1.5">
+        {AVATARS.map((a) => (
+          <button
+            key={a}
+            onClick={() => setEmoji(a)}
+            className={`rounded-xl py-1.5 text-xl transition-all ${
+              emoji === a ? "scale-110 bg-violet-500/30 ring-2 ring-violet-400 glow-violet" : "opacity-70"
+            }`}
+          >
+            {a}
+          </button>
+        ))}
+      </div>
+
+      <Press variant="pink" size="lg" className="w-full" disabled={!name.trim()} onClick={join}>
+        <DoorOpen className="h-5 w-5" /> JOIN AS {name.trim().toUpperCase() || "GUEST"}
+      </Press>
+    </motion.div>
   );
 }

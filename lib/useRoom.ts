@@ -19,7 +19,7 @@ export type RoomLoadState = "connecting" | "ready" | "missing";
 /** Phases where a player is allowed to know their own role. */
 const PRIVATE_VIEW_PHASES: ReadonlySet<PublicState["phase"]> = new Set(["ROLE_REVEAL", "IMPOSTER_LAST_CHANCE"]);
 
-export function useRoom(codeRaw: string) {
+export function useRoom(codeRaw: string, ready = true) {
   const code = useMemo(() => codeRaw.toUpperCase(), [codeRaw]);
   const [identity, setIdentity] = useState<RoomIdentity | null>(null);
   const [state, setState] = useState<PublicState | null>(null);
@@ -31,10 +31,13 @@ export function useRoom(codeRaw: string) {
 
   stateRef.current = state;
 
+  // 0) Optionally wait for the caller (e.g. a name gate) before touching
+  //    identity/storage — we must not mint a Guest identity first.
   // 1) Stable per-tab identity (refresh-safe via sessionStorage).
   useEffect(() => {
+    if (!ready) return;
     setIdentity(getRoomIdentity(code, loadProfile()));
-  }, [code]);
+  }, [code, ready]);
 
   // 2) Transport lifecycle.
   useEffect(() => {
@@ -59,12 +62,12 @@ export function useRoom(codeRaw: string) {
 
   // 3) Detect "room not found" quickly for a great join-error UX.
   useEffect(() => {
-    if (load !== "connecting") return;
+    if (!ready || load !== "connecting") return;
     const timer = setTimeout(() => {
       if (!stateRef.current) setLoad("missing");
     }, 3500);
     return () => clearTimeout(timer);
-  }, [load]);
+  }, [ready, load]);
 
   // 4) Fetch my private view when it becomes relevant.
   const phase = state?.phase ?? null;

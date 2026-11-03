@@ -4,9 +4,12 @@
  * The nickname/emoji profile lives in localStorage (shared, applies to new tabs).
  * The per-room playerId + secret live in sessionStorage so that:
  *  - refreshing the page keeps you in the room (session survives reload),
- *  - multiple tabs on the same machine act as distinct players,
- *    which is exactly how we test local multiplayer.
- * On real phones (different browsers) each session is naturally distinct.
+ *  - in LOCAL tab-party mode, multiple tabs on the same machine act as
+ *    distinct players, which is exactly how we test local multiplayer.
+ * On server/supabase backends the per-room identity is ALSO mirrored to
+ * localStorage (one player per device). That way, when a phone's browser
+ * discards a suspended tab overnight and someone taps the room link again,
+ * they rejoin as the SAME player instead of duplicating themselves.
  */
 
 export interface Profile {
@@ -35,6 +38,19 @@ const PROFILE_KEY = "impostr:profile";
  */
 const SESSION_PROFILE_KEY = "impostr:profile:tab";
 const id = (code: string) => `impostr:me:${code.toUpperCase()}`;
+/**
+ * Device-level per-room identity mirror (localStorage). Server/supabase
+ * backends only — local mode stays strictly per-tab.
+ */
+const DEVICE_ID_KEY = (code: string) => `impostr:me:${code.toUpperCase()}:device`;
+/** Non-local backends treat one browser = one player, across tab discards. */
+function deviceReclaimable(): boolean {
+  try {
+    return (process.env.NEXT_PUBLIC_BACKEND ?? "local").toLowerCase() !== "local";
+  } catch {
+    return false;
+  }
+}
 
 export function randomSecret(): string {
   if (typeof crypto !== "undefined" && crypto.getRandomValues) {
@@ -88,6 +104,31 @@ export function getRoomIdentity(code: string, profile?: Profile | null): RoomIde
   } catch {
     /* ignore */
   }
+  // Device reclaim: a suspended-then-discarded phone tab loses sessionStorage.
+  // Reuse the mirrored identity so the player rejoins as themselves, and
+  // refresh the name/emoji to whatever profile they currently have.
+  if (deviceReclaimable()) {
+    try {
+      const raw = localStorage.getItem(DEVICE_ID_KEY(code));
+      if (raw) {
+        const old = JSON.parse(raw) as RoomIdentity;
+        const name = (profile?.name ?? "").trim();
+        const identity: RoomIdentity = {
+          ...old,
+          name: name || old.name,
+          emoji: profile?.emoji || old.emoji,
+        };
+        try {
+          sessionStorage.setItem(key, JSON.stringify(identity));
+        } catch {
+          /* ignore */
+        }
+        return identity;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
   const name = (profile?.name ?? "").trim();
   const identity: RoomIdentity = {
     playerId: crypto.randomUUID(),
@@ -99,6 +140,13 @@ export function getRoomIdentity(code: string, profile?: Profile | null): RoomIde
     sessionStorage.setItem(key, JSON.stringify(identity));
   } catch {
     /* ignore */
+  }
+  if (deviceReclaimable()) {
+    try {
+      localStorage.setItem(DEVICE_ID_KEY(code), JSON.stringify(identity));
+    } catch {
+      /* ignore */
+    }
   }
   // Pin this tab's profile choice so a later join from another tab (same
   // browser) cannot rename us on refresh.

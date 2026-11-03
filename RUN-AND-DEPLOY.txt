@@ -1,0 +1,250 @@
+=======================================================================
+IMPOSTR — RUN LOCALLY + INSTALL ON CLOUDPANEL
+=======================================================================
+
+One app, three backends. Pick with one env var:
+
+    NEXT_PUBLIC_BACKEND=local      BroadcastChannel multi-tab mode (default;
+                                   no server state at all — test 4 tabs)
+    NEXT_PUBLIC_BACKEND=server     rooms live in server memory — NO database
+    NEXT_PUBLIC_BACKEND=supabase   rooms in Supabase Postgres + Realtime
+
+Party size: 3-10 players. Each phone/browser = one player.
+
+
+=======================================================================
+PART 1 — RUN LOCALLY (your dev machine)
+=======================================================================
+
+REQUIREMENTS
+------------
+    Node.js 20 or newer        https://nodejs.org  (LTS)
+    npm  (ships with Node)
+
+FIRST TIME SETUP
+----------------
+    cd <project folder>
+    npm install
+
+MODE A — LOCAL TAB PARTY (default, zero config)
+-----------------------------------------------
+    npm run dev
+
+    Open http://localhost:3000 in ONE tab:
+      1. Pick a nickname + emoji  →  CREATE ROOM
+      2. Open 3 more tabs of the SAME URL
+      3. Each new tab = a new player: pick a nickname,
+         type the room code → JOIN PARTY
+      4. Back in the host tab: START GAME
+
+    Works because every tab gets its own identity (sessionStorage).
+    Great for testing the whole flow chair-side. Nothing to configure.
+
+MODE B — SERVER MODE, NO DATABASE (what you'd deploy to CloudPanel)
+--------------------------------------------------------------------
+    NEXT_PUBLIC_BACKEND=server npm run dev
+
+    Now rooms are created by POST /api/rooms and live in the dev
+    server's memory. Same port: http://localhost:3000
+    Nobody needs a secret word/db/API key.
+
+    (Windows PowerShell: $env:NEXT_PUBLIC_BACKEND="server"; npm run dev)
+
+MODE C — SUPABASE PRODUCTION
+----------------------------
+    Only if you want the Supabase backend instead of the no-database mode:
+
+    1. Create a project at https://supabase.com
+    2. Open SQL Editor, paste the contents of supabase/schema.sql, run it
+    3. cp .env.example .env.local  and fill in:
+         NEXT_PUBLIC_BACKEND=supabase
+         SUPABASE_URL=<project url>              (server only)
+         SUPABASE_SERVICE_ROLE_KEY=...           (server only, NEVER in browser)
+         NEXT_PUBLIC_SUPABASE_URL=<project url>  (browser, realtime push)
+         NEXT_PUBLIC_SUPABASE_ANON_KEY=...       (browser, realtime push)
+    4. npm run dev
+
+PRODUCTION-LIKE BUILD CHECK (any mode)
+--------------------------------------
+    npx next build         # must finish green
+    npx next start         # runs the production server on :3000
+
+
+=======================================================================
+PART 2 — INSTALL ON CLOUDPANEL (VPS, no database)
+=======================================================================
+
+You will need: a VPS with CloudPanel, a domain pointed at it (A record),
+and SSH access. Everything runs on the standard HTTP ports — you never
+open :3000 to the outside world.
+
+The no-database "server" mode is the easiest possible deploy: a single
+Node process behind Nginx. Nothing else to install.
+
+STEP 0 — PREPARE THE APP ON YOUR MACHINE
+----------------------------------------
+    npm install
+    (optional sanity check) NEXT_PUBLIC_BACKEND=server npx next build
+
+STEP 1 — MOVE YOUR CODE TO THE VPS
+----------------------------------
+Pick whichever way you prefer:
+
+    Option A — git (recommended)
+        Push to GitHub/GitLab, then on the VPS:
+            git clone <your-repo-url> /home/<user>/impostr
+
+    Option B — plain upload
+        On YOUR machine:
+            tar --exclude node_modules --exclude .next -czf impostr.tgz .
+            scp impostr.tgz user@YOUR-VPS:/home/<user>/
+        On the VPS:
+            mkdir -p /home/<user>/impostr && cd /home/<user>/impostr
+            tar -xzf ~/impostr.tgz
+            rm ~/impostr.tgz
+
+    NOTE: never upload node_modules or .next — you rebuild on the VPS.
+
+STEP 2 — ENV FILE (create it BEFORE building!)
+----------------------------------------------
+    On the VPS, in the project folder create ".env.local":
+
+        NEXT_PUBLIC_BACKEND=server
+
+    That's it — no keys. IMPORTANT: variables that start with
+    NEXT_PUBLIC_ are baked into the JavaScript at BUILD time, so set
+    the env file BEFORE the build in step 3.
+
+STEP 3 — INSTALL + BUILD ON THE VPS
+-----------------------------------
+    cd /home/<user>/impostr
+    npm install
+    npx next build
+
+    (If the build is red: check that .env.local exists and Node is v20+:
+        node -v   →  should print v20.x or newer.)
+
+STEP 4 — KEEP IT ALIVE: PM2 (process manager)
+---------------------------------------------
+    If pm2 is missing:
+        sudo npm install -g pm2
+
+    Start the app (ONE process — fork mode, NOT cluster. Rooms live in
+    this process's memory; cluster mode would split the player base):
+
+        pm2 start "npx next start --port 3000" --name impostr
+
+    Make it survive reboots/deploys:
+        pm2 save
+        pm2 startup        # follow the ONE-LINER it prints (run as root)
+
+    Everyday commands:
+        pm2 restart impostr      # after you deploy new code
+        pm2 logs impostr         # live output
+        pm2 status
+
+STEP 5 — CLOUDPANEL SITE + NGINX REVERSE PROXY
+----------------------------------------------
+    In the CloudPanel dashboard:
+
+    1. Add Site → "Node.js" site with your domain, e.g.
+       imposter.example.com. (On older CloudPanel versions pick
+       "Static HTML" instead — the only thing we need from either is
+       the editable VHOST entry.)
+
+    2. Site > VHOST (the pencil/edit icon) — put this inside the server
+       block (replace /home/<user>/impostr if you used another path):
+
+        location / {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+       Remove any conflicting default location block CloudPanel wrote
+       for the site type, leaving the proxy one above.
+       Save, then it applies through the panel immediately; if you
+       edited files by hand instead, run:
+            sudo nginx -t && sudo systemctl reload nginx
+
+STEP 6 — HTTPS (Let's Encrypt via CloudPanel)
+---------------------------------------------
+    In CloudPanel: Site > SSL/TLS > Issue Let's Encrypt certificate.
+    Done — https://imposter.example.com now serves the game.
+
+    (Nothing else — if you later switch to Supabase mode, Nginx stays
+     exactly the same; it still just proxies port 3000.)
+
+STEP 7 — VERIFY
+---------------
+    From the VPS / any browser:
+
+        https://imposter.example.com            → Impostr home
+        curl  https://imposter.example.com      → 200 + HTML
+
+    Then the real test:
+        1. Phone A: open https://imposter.example.com, nickname,
+           CREATE ROOM → note the 4-letter code
+        2. Phone B/C: open the same link (or scan the QR code the host
+           screen offers), enter the code, JOIN PARTY
+        3. Host: START GAME
+
+TROUBLESHOOTING
+---------------
+    Symptom                                        Check
+    ---------------------------------------------  ----------------------
+    502 Bad Gateway                                pm2 status — the app
+                                                   must be "online" on
+                                                   port 3000. If not:
+                                                   pm2 logs impostr
+
+    Rooms work locally but not on the VPS          Is .env.local present
+                                                   BEFORE the build?
+                                                   NEXT_PUBLIC_* variables
+                                                   are baked at build time:
+                                                       rm -rf .next
+                                                       npx next build
+                                                       pm2 restart impostr
+                                                   Check the home screen
+                                                   footer: it should say
+                                                   "no database, rooms
+                                                   live in server memory".
+
+    Players join but play feels laggy              Polling needs ~2s worst
+                                                   case per action — that
+                                                   is normal for server
+                                                   mode. Check Nginx is not
+                                                   buffering (headers above
+                                                   are correct).
+
+    Room gone after pm2 restart                    EXPECTED in server
+                                                   mode — rooms are
+                                                   in-memory by design;
+                                                   games die on restart.
+                                                   (Use supabase mode if
+                                                   you need persistence.)
+
+    Hardening (optional): Cloudflare in front of the domain; keep port
+    3000 closed in the CloudPanel firewall (it is by default).
+
+=======================================================================
+QUICK REFERENCE
+=======================================================================
+
+    # local (multi-tab dev)
+    npm run dev
+
+    # local (no-database production mode)
+    NEXT_PUBLIC_BACKEND=server npm run dev
+
+    # deploy to your VPS
+    #  1) upload project      →  /home/<user>/impostr
+    #  2) echo "NEXT_PUBLIC_BACKEND=server" > .env.local
+    #  3) npm install && npx next build
+    #  4) pm2 start "npx next start --port 3000" --name impostr
+    #  5) pm2 save && pm2 startup
+    #  6) CloudPanel vhost proxy → 127.0.0.1:3000
+    #  7) SSL from CloudPanel → done

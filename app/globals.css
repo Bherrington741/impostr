@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@theme {
+  --color-acid: #a3e635;
+  --color-violet-neon: #8b5cf6;
+  --color-pink-neon: #ff2d92;
+  --font-display: ui-rounded, "SF Pro Rounded", "Hiragino Maru Gothic ProN", system-ui, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: radial-gradient(1200px 800px at 50% -10%, #1e1b4b 0%, #020617 55%, #000 100%);
+  color: #f1f5f9;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  font-family: var(--font-display);
+}
+
+button {
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+input,
+textarea {
+  font-family: inherit;
+}
+
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .glow-violet {
+    box-shadow: 0 0 32px rgba(139, 92, 246, 0.45), 0 0 90px rgba(139, 92, 246, 0.18);
+  }
+  .glow-acid {
+    box-shadow: 0 0 32px rgba(163, 230, 53, 0.4), 0 0 90px rgba(163, 230, 53, 0.15);
+  }
+  .glow-pink {
+    box-shadow: 0 0 32px rgba(255, 45, 146, 0.5), 0 0 90px rgba(255, 45, 146, 0.2);
+  }
+  .glow-red {
+    box-shadow: 0 0 34px rgba(244, 63, 94, 0.55), 0 0 100px rgba(244, 63, 94, 0.25);
+  }
+  .text-glow-white {
+    text-shadow: 0 0 22px rgba(255, 255, 255, 0.35);
+  }
+  .safe-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
